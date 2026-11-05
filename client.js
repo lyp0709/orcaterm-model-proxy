@@ -1004,6 +1004,27 @@ window.__ModuleLoader__.load({
             ),
           ),
           h(
+            Row,
+            {
+              label: '超长会话裁剪',
+              hint: '历史超过阈值时自动丢弃最老的对话，保留最近内容与成对的工具调用。关闭则完整发送，可能撞上游上下文上限',
+            },
+            h(
+              'select',
+              {
+                className: 'ot-select',
+                value: String(cfg.contextTrimChars ?? 120000),
+                disabled: Boolean(busy),
+                onChange: (e) => saveConfig({ contextTrimChars: Number(e.target.value) }),
+              },
+              h('option', { value: '0' }, '关闭（始终全量发送）'),
+              h('option', { value: '40000' }, '40,000 字符（激进）'),
+              h('option', { value: '80000' }, '80,000 字符（偏紧）'),
+              h('option', { value: '120000' }, '120,000 字符（推荐）'),
+              h('option', { value: '240000' }, '240,000 字符（宽松）'),
+            ),
+          ),
+          h(
             'div',
             { className: 'ot-note' },
             h('div', { className: 'ot-note-line' }, '工具调用怎么工作'),

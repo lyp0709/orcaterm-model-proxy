@@ -148,6 +148,14 @@ export function createService({ config, warn }) {
      * 只覆盖「发请求 → 拿到响应头」，不截断流式读取，避免长回答被误杀。
      */
     connectTimeoutMs: Number.isFinite(cfg.connectTimeoutMs) ? cfg.connectTimeoutMs : 60000,
+    /**
+     * 触发历史裁剪的字符阈值。
+     *
+     * 实测上游上下文很宽松（260k 字符仍可用），但长会话迟早会撞上限。
+     * 默认 120k 作为安全水位，留余量给工具说明与本轮新增内容。
+     * 设为 0 可关闭裁剪。
+     */
+    contextTrimChars: Number.isFinite(cfg.contextTrimChars) ? cfg.contextTrimChars : 120000,
   };
 
 
@@ -197,6 +205,7 @@ export function createService({ config, warn }) {
         if (Number.isInteger(disk.maxRetries)) runtime.maxRetries = disk.maxRetries;
         if (typeof disk.fallbackModel === "string") runtime.fallbackModel = disk.fallbackModel;
         if (Number.isFinite(disk.connectTimeoutMs)) runtime.connectTimeoutMs = disk.connectTimeoutMs;
+        if (Number.isFinite(disk.contextTrimChars)) runtime.contextTrimChars = disk.contextTrimChars;
       }
     } catch {}
   }

@@ -19,11 +19,20 @@ import { collectImageFiles } from "./image-files.js";
 import { openExternal } from "./open-external.js";
 import { SESSION_COOKIE } from "./cookie-normalize.js";
 import { startAutoLogin, clearLoginProfile } from "./auto-login.js";
+import { trimHistory, contextLimitMessage, isContextOverflowError } from "./context-trim.js";
 
 const PROVIDER = "orcaterm";
 const ORIGIN = "https://orcaterm.ai";
 const CHAT_BASE = "https://lightai.tencentcloud.com";
 const CHAT_PATH = "/assistant/chat?name=orcaterm&mode=0&csrfCode=&sseresume=true";
+
+/**
+ * 上游允许的最大输出 token 数。
+ *
+ * 实测来源：OrcaTerm 前端校验 `max_tokens不能大于 8096`，
+ * 超过会被直接拒绝。调用方给的更大值时必须夹紧。
+ */
+const MAX_OUTPUT_TOKENS = 8096;
 
 /**
  * 指数退避的等待时长。
@@ -194,8 +203,16 @@ class OrcaTermAdapter extends LlmAdapter {
 
     // 正文：首次提问时发完整历史；工具回灌时走 review 请求，不发正文。
     let promptText = "";
+    /** 历史裁剪结果，用于诊断与超限提示。 */
+    let trimInfo = { trimmed: false, dropped: 0, beforeChars: 0, afterChars: 0 };
     if (!isToolFollowUp) {
-      promptText = toAcpEnvelope(options.messages);
+      // 主动裁剪：上下文虽然宽松（实测 260k 字符仍可用），但不该等到
+      // 服务端报错才处理。超阈值时削掉最老的历史，保留最近对话与
+      // 成对的工具调用，并始终保留 system 消息。
+      trimInfo = trimHistory(options.messages, {
+        threshold: runtime.contextTrimChars > 0 ? runtime.contextTrimChars : undefined,
+      });
+      promptText = toAcpEnvelope(trimInfo.messages);
     }
 
     // ---- 图片：把本轮消息里的图片块转成 OrcaTerm 的 input.files ----
@@ -246,9 +263,10 @@ class OrcaTermAdapter extends LlmAdapter {
             kwargs: {
               thinking: { type: "enabled" },
               reasoning_effort: runtime.reasoningEffort,
-              // 尊重调用方给的最大输出长度；上游用 max_tokens 字段
+              // 尊重调用方给的最大输出长度，但上游对 max_tokens 有硬上限（8096）。
+              // 超出会被服务端直接拒绝，因此这里必须夹紧到合法区间。
               ...(Number.isFinite(options.maxTokens) && options.maxTokens > 0
-                ? { max_tokens: options.maxTokens }
+                ? { max_tokens: Math.min(options.maxTokens, MAX_OUTPUT_TOKENS) }
                 : {}),
             },
           },
@@ -292,6 +310,11 @@ class OrcaTermAdapter extends LlmAdapter {
       toolNames: tools.slice(0, 8).map((t) => t.name),
       toolPromptChars: toolPrompt.length,
       isToolFollowUp,
+      // 上下文裁剪：是否削过历史、削了多少
+      contextTrimmed: trimInfo.trimmed,
+      contextDropped: trimInfo.dropped,
+      contextBeforeChars: trimInfo.beforeChars,
+      contextAfterChars: trimInfo.afterChars,
       // 图片：本轮实际带上了几张、有没有被跳过的
       imageCount: imageFiles.length,
       imageNames: imageFiles.map((f) => f.name).slice(0, 10),
@@ -457,6 +480,13 @@ class OrcaTermAdapter extends LlmAdapter {
           });
         }
 
+        // 上下文超限：重试无意义（同样的输入必然再超），给出可操作提示
+        if (isContextOverflowError(text)) {
+          throw new LlmError(contextLimitMessage({ beforeChars: trimInfo.beforeChars, trimmed: trimInfo.trimmed }), "CONTEXT_OVERFLOW", {
+            status,
+          });
+        }
+
         // 429/5xx 可重试
         const retryable = status === 429 || status >= 500;
         lastError = new LlmError(`orcaterm: HTTP ${status}: ${text.slice(0, 300)}`, status === 429 ? "RATE_LIMIT" : "PROVIDER_ERROR", {
@@ -538,11 +568,18 @@ class OrcaTermAdapter extends LlmAdapter {
           if (/\[ERROR\]/i.test(data)) {
             terminated = true;
             lastSseError = data.replace(/^\[ERROR\]:\s*/i, "").trim();
+            // 上下文超限走专门的提示，普通错误保留上游原文
+            const overflow = isContextOverflowError(lastSseError);
             yield {
               type: "finish",
               reason: {
                 kind: "error",
-                failure: { message: `orcaterm: ${lastSseError.slice(0, 500)}`, code: "PROVIDER_ERROR" },
+                failure: overflow
+                  ? {
+                      message: contextLimitMessage({ beforeChars: trimInfo.beforeChars, trimmed: trimInfo.trimmed }),
+                      code: "CONTEXT_OVERFLOW",
+                    }
+                  : { message: `orcaterm: ${lastSseError.slice(0, 500)}`, code: "PROVIDER_ERROR" },
               },
             };
             return;
@@ -708,11 +745,20 @@ class OrcaTermAdapter extends LlmAdapter {
       }
 
       if (!anyText && !anyReasoning && !sawTool) {
+        // 空响应有两种常见成因：真实的空回答，或上游因上下文/审核问题
+        // 静默丢弃了输出。如果本次输入接近上限，优先提示上下文问题，
+        // 否则用户会看到「模型没有返回内容」这种无从下手的错误。
+        const nearLimit = trimInfo.beforeChars >= (runtime.contextTrimChars > 0 ? runtime.contextTrimChars : 120_000);
         yield {
           type: "finish",
           reason: {
             kind: "error",
-            failure: { message: "orcaterm: 模型没有返回任何内容", code: "EMPTY_RESPONSE" },
+            failure: nearLimit
+              ? {
+                  message: contextLimitMessage({ beforeChars: trimInfo.beforeChars, trimmed: trimInfo.trimmed }),
+                  code: "CONTEXT_OVERFLOW",
+                }
+              : { message: "orcaterm: 模型没有返回任何内容", code: "EMPTY_RESPONSE" },
           },
         };
         return;
@@ -948,6 +994,10 @@ function apply(ctx, config) {
                 if (typeof body?.fallbackModel === "string") patch.fallbackModel = body.fallbackModel;
                 if (Number.isInteger(body?.maxRetries) && body.maxRetries >= 0 && body.maxRetries <= 5) {
                   patch.maxRetries = body.maxRetries;
+                }
+                // 上下文裁剪阈值：0 表示关闭；允许 20k ~ 800k 之间的整千数值
+                if (Number.isInteger(body?.contextTrimChars) && body.contextTrimChars >= 0 && body.contextTrimChars <= 800000) {
+                  patch.contextTrimChars = body.contextTrimChars;
                 }
                 const saved = await service.saveRuntime(patch);
                 send(200, { ok: true, config: saved });
