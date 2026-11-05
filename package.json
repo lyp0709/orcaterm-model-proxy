@@ -13,6 +13,14 @@
     "llm-adapter"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lyp0709/orcaterm-model-proxy.git"
+  },
+  "homepage": "https://github.com/lyp0709/orcaterm-model-proxy#readme",
+  "bugs": {
+    "url": "https://github.com/lyp0709/orcaterm-model-proxy/issues"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

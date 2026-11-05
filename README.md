@@ -17,7 +17,7 @@
 ### 从 GitHub 安装（推荐）
 
 ```powershell
-dsh plugin --profile desktop add github:<你的用户名>/orcaterm-model-proxy
+dsh plugin --profile desktop add github:lyp0709/orcaterm-model-proxy
 ```
 
 ### 从本地目录安装
@@ -32,7 +32,7 @@ dsh plugin --profile desktop add "D:\path\to\orcaterm-model-proxy"
 
 在 DSH 里直接说：
 
-> 帮我安装这个插件：github.com/<你的用户名>/orcaterm-model-proxy
+> 帮我安装这个插件：github.com/lyp0709/orcaterm-model-proxy
 
 安装完成后**重启 DSH**。
 
@@ -114,10 +114,27 @@ dsh plugin --profile desktop add "D:\path\to\orcaterm-model-proxy"
 
 ## 隐私说明
 
-- 凭证保存在本地 `~/.dsh/orcaterm-cookie.txt`，只包含 `__Secure-ot_session` 一个值。
-- 插件**不会**把凭证发送到除 OrcaTerm 官方接口以外的任何地方。
-- 插件**不会**读取浏览器数据。凭证由用户手动粘贴。
-- 调用统计保存在本地 `~/.dsh/orcaterm-usage.json`。
+**插件会做什么：**
+
+- 一键登录时启动一个**独立**的浏览器窗口，用户数据目录为 `~/.dsh/orcaterm-login-profile`，与你日常使用的浏览器完全隔离
+- 通过 Chrome DevTools Protocol 读取 `orcaterm.ai` 这一个域名的 `__Secure-ot_session` Cookie
+- 读到凭证后立即关闭该浏览器窗口
+
+**插件不会做什么：**
+
+- ❌ 不读取你日常浏览器的任何数据
+- ❌ 不读取其他网站的任何 Cookie
+- ❌ 不把凭证发送到除 OrcaTerm 官方接口以外的任何地方
+- ❌ 不在后台常驻浏览器进程
+
+**本地存储的文件：**
+
+| 文件 | 内容 |
+|---|---|
+| `~/.dsh/orcaterm-cookie.txt` | 仅 `__Secure-ot_session` 一个值 |
+| `~/.dsh/orcaterm-token.json` | 短期 JWT 缓存（2 小时） |
+| `~/.dsh/orcaterm-usage.json` | 本地调用统计 |
+| `~/.dsh/orcaterm-login-profile/` | 登录专用浏览器数据，可在面板「清除登录缓存」删除 |
 
 ## 故障排查
 
@@ -131,23 +148,46 @@ http://127.0.0.1:<DSH端口>/api/orcaterm/diag
 
 | 现象 | 原因与处理 |
 |---|---|
-| 提示凭证无效 | 登录状态过期，重新获取一次 `__Secure-ot_session` |
+| 一键登录没弹出浏览器 | 确认安装了 Edge 或 Chrome；关闭同名浏览器窗口后重试 |
+| 一键登录提示端口占用 | 可能有残留浏览器进程，重启或改用手动输入 |
+| 登录后未检测到凭证 | 登录完成后让窗口保持打开几秒；仍失败则用手动输入 |
+| 提示凭证无效 | 登录状态过期，点「重新登录」 |
 | 模型不返回内容 | 检查是否触发限流（上游限制约 2 秒 1 次） |
 | 图片识别失效 | 确认用的是 DeepSeek 或 Kimi 模型，且设置里「图片识别」已开启 |
 | 工具调用失败 | 确认「工具调用」已开启；GLM 5.3 对图片会 400 |
 
-## 开发
+## 项目结构
+
+```
+├── index.js              插件入口：LlmAdapter 实现 + /api/orcaterm/* 端点
+├── service.js            Host 数据层：凭证、续期、额度、模型列表、调用统计
+├── client.js             设置面板（浏览器侧 React 组件）
+├── cordis.patch.yml      DSH 插件装配清单（配置项默认值）
+│
+├── auto-login.js         一键登录：CDP 启动浏览器并读取 Cookie
+├── cookie-normalize.js   凭证归一化：整条 Cookie → 只留 __Secure-otSession
+├── open-external.js      打开系统浏览器（仅允许 http/https）
+│
+├── tool-stream.js        信封解析：区分工具 / 正文 / ask 三类信封
+├── tool-prompt.js        工具清单注入 emphasisPrompt
+├── tool-loop.js          工具结果回传（reportToolResult）
+├── answer-stream.js      JSON 信封的增量正文提取
+│
+├── image-files.js        DSH ImageBlock → input.files（base64）
+├── session-map.js        DSH 会话 → OrcaTerm conversationId 映射
+└── usage.js              本地调用统计
+```
+
+代码改动后需要**重启 DSH** 才能生效（Node 模块缓存）。
+
+调试可以用设置面板的「诊断」，或直接读接口：
 
 ```powershell
-# 语法检查
-node --check index.js
-
-# 测试（需要在 DSH 仓库外运行）
-node test-tool-stream.mjs
-node test-adapter.mjs
-node test-images.mjs
-node test-cookie.mjs
+# 最近一次调用的完整画像
+curl http://127.0.0.1:<DSH端口>/api/orcaterm/diag
 ```
+
+关键诊断字段：`imageCount` / `imageSkipped`（图片是否送达）、`toolReported`（工具结果是否回传）、`roleBreakdown`（消息结构）、`isToolFollowUp`（是否工具回灌轮）。
 
 ## 许可
 
