@@ -1,0 +1,1 @@
+{ "meta": { "title": "OrcaTerm 模型代理", "description": "将 OrcaTerm 的 OpenAI 兼容模型提供商暴露为 DSH LLM 适配器" } }

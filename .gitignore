@@ -1,0 +1,23 @@
+# Node
+node_modules/
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 临时与调试
+*.log
+_tmp/
+tmp/
+.cache/
+
+# 本地构建产物
+dist/
+build/
+*.tgz

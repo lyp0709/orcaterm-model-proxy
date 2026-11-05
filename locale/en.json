@@ -1,0 +1,1 @@
+{ "meta": { "title": "OrcaTerm Model Proxy", "description": "Expose OrcaTerm's OpenAI-compatible model providers as DSH LLM adapters" } }

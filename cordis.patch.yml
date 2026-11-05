@@ -1,0 +1,46 @@
+- insert:
+    - id: orcaterm-model-proxy
+      name: 'orcaterm-model-proxy'
+      config:
+        # ============ 认证 ============
+        # 凭证获取方式：设置面板里的「一键登录」（推荐），或手动粘贴。
+        # 落盘位置 ~/.dsh/orcaterm-cookie.txt，只含 __Secure-ot_session 一个值。
+        #
+        # 也可以在这里直接填 cookie（留空则从文件读取），或设置环境变量 ORCATERM_COOKIE。
+        cookie: ""
+
+        # 默认模型（未显式选择时使用）
+        model: "TokenHub/deepseek-v4.1-flash"
+        reasoningEffort: "high"
+
+        # 是否显示模型思考过程（映射为 DSH 的 reasoning 块）。默认 true。
+        showReasoning: true
+
+        # 工具调用：开启后 DSH 注册的工具会交给模型使用。
+        # 工具由本机（DSH）执行，不经 OrcaTerm 服务器，凭证不外泄。
+        # 关闭则退化为纯对话模式。
+        enableTools: true
+
+        # 图片识别：开启后消息里的图片会转成 input.files 发给上游。
+        # 实测 DeepSeek V4.1 Flash / Kimi K3 可识图；GLM 5.3 不接受图片，Hunyuan 3 识图不准。
+        enableImages: true
+
+        # 失败重试次数（仅对网络错误、429、5xx 生效；401/403 属凭证问题不重试）
+        maxRetries: 2
+
+        # 备用模型：主模型彻底失败时自动切换。留空表示不降级。
+        fallbackModel: ""
+
+        # 可用模型清单已内置于插件（8 个，均已实测可用）：
+        #   DeepSeek V4.1 Flash / DeepSeek V4 Flash / DeepSeek V4 Pro
+        #   Kimi K3 / GLM 5.3 Flash / GLM 5.3 / GLM 5.2 / Hunyuan 3
+        # 如需覆盖，取消注释并填写：
+        # models:
+        #   - id: "TokenHub/deepseek-v4.1-flash"
+        #     name: "DeepSeek V4.1 Flash"
+        #   - id: "TokenHub/deepseek-v4-pro"
+        #     name: "DeepSeek V4 Pro"
+
+        # 等待上游响应头的超时（毫秒）。只覆盖「发请求 → 拿到响应头」，
+        # 不会截断流式输出，长回答不受影响。
+        connectTimeoutMs: 60000

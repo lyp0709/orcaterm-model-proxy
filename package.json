@@ -1,0 +1,57 @@
+{
+  "name": "orcaterm-model-proxy",
+  "version": "0.11.1",
+  "type": "module",
+  "description": "把 OrcaTerm 网页版的免费模型接入 DeepSeek Harness（DSH），支持一键登录、工具调用与图片识别，并提供可视化设置面板",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "orcaterm",
+    "free-models",
+    "llm-adapter"
+  ],
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "service.js",
+    "answer-stream.js",
+    "tool-stream.js",
+    "tool-prompt.js",
+    "tool-loop.js",
+    "image-files.js",
+    "cookie-normalize.js",
+    "open-external.js",
+    "auto-login.js",
+    "session-map.js",
+    "usage.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/en.json",
+    "locale/zh.json",
+    "icon.svg"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0-0 <5.0.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.2.1-rc.5 <0.3.0-0 || >=0.2.2-rc.1 <0.3.0-0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  }
+}
