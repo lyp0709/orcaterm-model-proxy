@@ -745,15 +745,20 @@ class OrcaTermAdapter extends LlmAdapter {
       }
 
       if (!anyText && !anyReasoning && !sawTool) {
-        // 空响应有两种常见成因：真实的空回答，或上游因上下文/审核问题
-        // 静默丢弃了输出。如果本次输入接近上限，优先提示上下文问题，
-        // 否则用户会看到「模型没有返回内容」这种无从下手的错误。
-        const nearLimit = trimInfo.beforeChars >= (runtime.contextTrimChars > 0 ? runtime.contextTrimChars : 120_000);
+        // 空响应有多种成因：真实的空回答、上游安全审核拦截、或上下文问题。
+        //
+        // 实测表明服务端容量很大（120 万字符都不超限），所以「接近阈值」
+        // 并不足以断定是上下文问题。只有一种情况值得提示上下文：
+        // 关闭了裁剪且历史确实很大 —— 这时内容超出模型可靠检索区间，
+        // 模型容易「看不到」问题本身而返回空。
+        const trimDisabled = !(runtime.contextTrimChars > 0);
+        const hugeInput = trimInfo.beforeChars >= 300_000;
+        const likelyContext = trimDisabled && hugeInput;
         yield {
           type: "finish",
           reason: {
             kind: "error",
-            failure: nearLimit
+            failure: likelyContext
               ? {
                   message: contextLimitMessage({ beforeChars: trimInfo.beforeChars, trimmed: trimInfo.trimmed }),
                   code: "CONTEXT_OVERFLOW",

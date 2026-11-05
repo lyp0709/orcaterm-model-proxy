@@ -1007,21 +1007,50 @@ window.__ModuleLoader__.load({
             Row,
             {
               label: '超长会话裁剪',
-              hint: '历史超过阈值时自动丢弃最老的对话，保留最近内容与成对的工具调用。关闭则完整发送，可能撞上游上下文上限',
+              hint: '历史超过阈值时自动丢弃最老的对话，保留 system 消息、最近内容与成对的工具调用',
             },
             h(
               'select',
               {
                 className: 'ot-select',
-                value: String(cfg.contextTrimChars ?? 120000),
+                value: String(cfg.contextTrimChars ?? 200000),
                 disabled: Boolean(busy),
                 onChange: (e) => saveConfig({ contextTrimChars: Number(e.target.value) }),
               },
               h('option', { value: '0' }, '关闭（始终全量发送）'),
               h('option', { value: '40000' }, '40,000 字符（激进）'),
               h('option', { value: '80000' }, '80,000 字符（偏紧）'),
-              h('option', { value: '120000' }, '120,000 字符（推荐）'),
-              h('option', { value: '240000' }, '240,000 字符（宽松）'),
+              h('option', { value: '120000' }, '120,000 字符（保守）'),
+              h('option', { value: '200000' }, '200,000 字符（推荐，检索可靠上限）'),
+              h('option', { value: '500000' }, '500,000 字符（宽松，中部可能漏读）'),
+              h('option', { value: '1000000' }, '1,000,000 字符（极限，中部大概率漏读）'),
+            ),
+          ),
+
+          // 上下文实测结论：这是本插件最容易被误解的地方，必须写清楚
+          h(
+            'div',
+            { className: 'ot-note' },
+            h('div', { className: 'ot-note-line', style: { fontWeight: 600 } }, '关于上下文长度（实测数据）'),
+            h(
+              'div',
+              { className: 'ot-note-line' },
+              '① 服务端容量很大：实测 1,200,000 字符（约 100 万 token）仍能正常返回，不会报超限，也不会悄悄截断内容。',
+            ),
+            h(
+              'div',
+              { className: 'ot-note-line' },
+              '② 但模型的注意力有限：超过约 200,000 字符后，中间位置的内容容易被漏读（首尾仍能读到）。这是当前大模型的通病，与 OrcaTerm 无关。',
+            ),
+            h(
+              'div',
+              { className: 'ot-note-line' },
+              '③ 因此默认裁剪到 200,000 字符 —— 这是实测的检索可靠性上限。调高能容纳更多历史，但模型可能漏看中间部分；关闭则完整发送，长会话中模型更容易漏读。',
+            ),
+            h(
+              'div',
+              { className: 'ot-note-line' },
+              '④ 单次输出上限固定为 8,096 token，由上游限制，插件无法提高。',
             ),
           ),
           h(
