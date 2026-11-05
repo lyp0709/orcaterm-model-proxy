@@ -134,6 +134,9 @@ class OrcaTermAdapter extends LlmAdapter {
   }
 
   async listModels(provider) {
+    // 必须先等磁盘配置合并进 runtime —— 否则 disabledModels 还是空数组，
+    // 停用的模型会重新出现在选择器里（DSH 启动后直接开选择器就是这个顺序）。
+    await this.options.service.ready();
     // 只返回启用中的模型 —— 停用的不会出现在 DSH 的模型选择器里。
     const models = this.options.service.getEnabledModels();
     return models.map((m) => ({
@@ -146,6 +149,7 @@ class OrcaTermAdapter extends LlmAdapter {
   }
 
   async resolveModel(provider, modelId) {
+    await this.options.service.ready();
     const models = this.options.service.getModels();
     const runtime = this.options.service.getRuntime();
     const enabled = this.options.service.getEnabledModels();
@@ -178,6 +182,9 @@ class OrcaTermAdapter extends LlmAdapter {
     const self = this;
     const service = self.options.service;
     const signal = options.signal;
+    // 先等磁盘配置合并进 runtime，否则下面的 disabledModels / model 等
+    // 读到的都是 patch 默认值，停用判断会失效。
+    await service.ready();
     const runtime = service.getRuntime();
     /** 本次调用的起始时刻，用于统计耗时。 */
     const callStartedAt = Date.now();

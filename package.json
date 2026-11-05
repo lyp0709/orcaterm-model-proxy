@@ -1,6 +1,6 @@
 {
   "name": "orcaterm-model-proxy",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "type": "module",
   "description": "把 OrcaTerm 网页版的免费模型接入 DeepSeek Harness（DSH），支持一键登录、工具调用与图片识别，并提供可视化设置面板",
   "keywords": [

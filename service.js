@@ -741,6 +741,17 @@ export function createService({ config, warn }) {
 
   return {
     snapshot,
+    /**
+     * 等待磁盘配置加载完成。
+     *
+     * 关键：getModels / getEnabledModels / isDisabled 都是同步函数，直接读
+     * 内存里的 runtime；而 runtime 的磁盘值只在 ensureLoaded() 里合并进来。
+     * 如果 DSH 在面板打开之前就调用适配器的 listModels()（用户在启动后
+     * 直接点模型选择器就是这个顺序），读到的会是 patch 默认值 ——
+     * 表现就是「停用了但选择器里还在」。
+     * 所以所有异步入口必须先 await ready()。
+     */
+    ready: () => ensureLoaded(),
     getRuntime: () => runtime,
     /** 全部模型（含停用），供面板与诊断使用。 */
     getModels: allModels,
