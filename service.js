@@ -157,6 +157,15 @@ export function createService({ config, warn }) {
      * 设为 0 可关闭裁剪（始终全量发送）。
      */
     contextTrimChars: Number.isFinite(cfg.contextTrimChars) ? cfg.contextTrimChars : 200000,
+    /**
+     * 已停用的模型 id 列表。
+     *
+     * 停用后：适配器的 listModels() 不再返回它，DSH 的模型选择器里就看不到；
+     * 已选中的会话也会在下次调用时自动回退到第一个可用模型。
+     */
+    disabledModels: Array.isArray(cfg.disabledModels)
+      ? cfg.disabledModels.filter((x) => typeof x === "string" && x)
+      : [],
   };
 
 
@@ -207,6 +216,9 @@ export function createService({ config, warn }) {
         if (typeof disk.fallbackModel === "string") runtime.fallbackModel = disk.fallbackModel;
         if (Number.isFinite(disk.connectTimeoutMs)) runtime.connectTimeoutMs = disk.connectTimeoutMs;
         if (Number.isFinite(disk.contextTrimChars)) runtime.contextTrimChars = disk.contextTrimChars;
+        if (Array.isArray(disk.disabledModels)) {
+          runtime.disabledModels = disk.disabledModels.filter((x) => typeof x === "string" && x);
+        }
       }
     } catch {}
   }
@@ -611,7 +623,9 @@ export function createService({ config, warn }) {
 
     const cookie = await resolveCookie();
     const info = {
-      config: { ...runtime, models: DEFAULT_MODELS, options: OPTIONS },
+      // models 走 allModels()，让 cfg.models 的自定义清单也能生效；
+      // 启用状态在 runtime.disabledModels 里，面板据此渲染开关。
+      config: { ...runtime, models: allModels(), options: OPTIONS },
       quotaNote: QUOTA_NOTE,
       usage: await usage.summary(30),
       cookie: {
@@ -661,10 +675,79 @@ export function createService({ config, warn }) {
     return info;
   }
 
+  /** 全部模型（含停用的），用于面板渲染。 */
+  function allModels() {
+    return Array.isArray(cfg.models) && cfg.models.length > 0 ? cfg.models : DEFAULT_MODELS;
+  }
+
+  /** 判断某个模型是否被停用。 */
+  function isDisabled(id) {
+    return runtime.disabledModels.includes(String(id ?? ""));
+  }
+
+  /**
+   * 启用中的模型。
+   *
+   * 适配器的 listModels() 用它，因此停用的模型不会出现在 DSH 模型选择器里。
+   */
+  function enabledModels() {
+    const list = allModels();
+    const enabled = list.filter((m) => !isDisabled(m.id));
+    // 至少要留一个可用模型，否则选择器会空掉、插件彻底不可用。
+    return enabled.length > 0 ? enabled : list.slice(0, 1);
+  }
+
+  /**
+   * 设置某个模型的启用状态。
+   *
+   * @param {string} id 模型 id。
+   * @param {boolean} enabled 是否启用。
+   * @returns {Promise<{ disabledModels: string[], fallbackModel: string, model: string }>}
+   *   返回更新后的停用列表；若当前默认模型/备用模型被停用，会顺带修正并回传。
+   */
+  async function setModelEnabled(id, enabled) {
+    const target = String(id ?? "");
+    if (!target) throw new Error("模型 id 不能为空");
+    if (!allModels().some((m) => m.id === target)) throw new Error(`未知模型：${target}`);
+
+    const next = new Set(runtime.disabledModels);
+    if (enabled) next.delete(target);
+    else next.add(target);
+
+    // 不能把全部模型都停用 —— 至少留一个，否则插件不可用
+    const remaining = allModels().filter((m) => !next.has(m.id));
+    if (remaining.length === 0) {
+      throw new Error("至少要保留一个启用的模型，否则插件无法工作。");
+    }
+
+    const patch = { disabledModels: [...next] };
+
+    // 默认模型被停用时，自动切到第一个可用模型
+    if (!enabled && runtime.model === target) {
+      patch.model = remaining[0].id;
+    }
+    // 备用模型被停用时清空，避免降级到不可用模型
+    if (!enabled && runtime.fallbackModel === target) {
+      patch.fallbackModel = "";
+    }
+
+    await saveRuntime(patch);
+    return {
+      disabledModels: [...runtime.disabledModels],
+      fallbackModel: runtime.fallbackModel,
+      model: runtime.model,
+    };
+  }
+
   return {
     snapshot,
     getRuntime: () => runtime,
-    getModels: () => (Array.isArray(cfg.models) && cfg.models.length > 0 ? cfg.models : DEFAULT_MODELS),
+    /** 全部模型（含停用），供面板与诊断使用。 */
+    getModels: allModels,
+    /** 启用中的模型，适配器 listModels() 与调用路径使用。 */
+    getEnabledModels: enabledModels,
+    isDisabled,
+    setModelEnabled,
     getToken,
     saveRuntime,
     saveCookie,

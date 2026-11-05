@@ -134,7 +134,8 @@ class OrcaTermAdapter extends LlmAdapter {
   }
 
   async listModels(provider) {
-    const models = this.options.service.getModels();
+    // 只返回启用中的模型 —— 停用的不会出现在 DSH 的模型选择器里。
+    const models = this.options.service.getEnabledModels();
     return models.map((m) => ({
       provider,
       id: m.id,
@@ -147,13 +148,18 @@ class OrcaTermAdapter extends LlmAdapter {
   async resolveModel(provider, modelId) {
     const models = this.options.service.getModels();
     const runtime = this.options.service.getRuntime();
+    const enabled = this.options.service.getEnabledModels();
     const id = modelId || runtime.model;
+    // 传进来的是已停用模型时不报错，静默回退到第一个可用模型 ——
+    // 否则用户在停用后切会话会看到莫名其妙的失败。
     const found = models.find((m) => m.id === id);
+    const usable = this.options.service.isDisabled(id) ? enabled[0]?.id ?? id : id;
+    const usableInfo = models.find((m) => m.id === usable);
     return {
       provider,
-      id,
-      name: found ? found.name : "OrcaTerm",
-      defaultMaxTokens: 8192,
+      id: usable,
+      name: usableInfo ? usableInfo.name : found ? found.name : "OrcaTerm",
+      defaultMaxTokens: MAX_OUTPUT_TOKENS,
     };
   }
 
@@ -397,10 +403,22 @@ class OrcaTermAdapter extends LlmAdapter {
     // ---- 请求：带重试与备用模型降级 ----
     const requestBody = { ...body, user: { ...body.user, setting: { ...body.user.setting } } };
 
-    /** 依次尝试的模型：主模型 + 备用模型。 */
-    const primaryModel = options.model || runtime.model;
+    /**
+     * 依次尝试的模型：主模型 + 备用模型。
+     *
+     * 会话可能在模型被停用前就选中了它，或备用模型已被停用 ——
+     * 这些情况都要静默回退到启用列表里的第一个，而不是直接报错。
+     */
+    const requestedModel = options.model || runtime.model;
+    const primaryModel = service.isDisabled(requestedModel)
+      ? service.getEnabledModels()[0]?.id ?? requestedModel
+      : requestedModel;
     const candidates = [primaryModel];
-    if (runtime.fallbackModel && runtime.fallbackModel !== primaryModel) {
+    if (
+      runtime.fallbackModel &&
+      runtime.fallbackModel !== primaryModel &&
+      !service.isDisabled(runtime.fallbackModel)
+    ) {
       candidates.push(runtime.fallbackModel);
     }
 
@@ -983,7 +1001,38 @@ function apply(ctx, config) {
                 return;
               }
               if (path.endsWith("/models")) {
-                send(200, { ok: true, models: DEFAULT_MODELS, options: OPTIONS });
+                // 返回全部模型（含停用状态），面板据此渲染启用/停用开关
+                const all = service.getModels();
+                const runtimeCfg = service.getRuntime();
+                send(200, {
+                  ok: true,
+                  models: all.map((m) => ({ ...m, enabled: !service.isDisabled(m.id) })),
+                  options: OPTIONS,
+                  disabledModels: runtimeCfg.disabledModels,
+                  enabledCount: service.getEnabledModels().length,
+                });
+                return;
+              }
+              // 启用 / 停用某个模型
+              if (path.endsWith("/models/toggle") && request.method === "POST") {
+                const body = await readJsonBody(request);
+                const id = typeof body?.id === "string" ? body.id : "";
+                const enabled = body?.enabled !== false;
+                if (!id) {
+                  send(400, { ok: false, error: "缺少模型 id" });
+                  return;
+                }
+                const result = await service.setModelEnabled(id, enabled);
+                // 顺带返回最新的完整状态，面板一次刷新即可
+                const all = service.getModels();
+                send(200, {
+                  ok: true,
+                  models: all.map((m) => ({ ...m, enabled: !service.isDisabled(m.id) })),
+                  disabledModels: result.disabledModels,
+                  model: result.model,
+                  fallbackModel: result.fallbackModel,
+                  enabledCount: service.getEnabledModels().length,
+                });
                 return;
               }
               if (path.endsWith("/config") && request.method === "POST") {

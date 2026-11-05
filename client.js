@@ -190,6 +190,21 @@ window.__ModuleLoader__.load({
 /* 右栏固定，永不换行 */
 .ot-model-ops { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 
+/* 停用的模型整行淡化，一眼能看出不生效 */
+.ot-model-off { opacity: .55; }
+
+/* 「启用」按钮用强调色，和「停用」区分开 */
+.ot-btn-off {
+  border-color: var(--dsw-alias-accent, #2b7fff);
+  color: var(--dsw-alias-accent, #2b7fff);
+}
+
+/* 已停用胶囊 */
+.ot-chip-off {
+  color: var(--dsw-alias-warning, #d97706);
+  border-color: var(--dsw-alias-warning, #d97706);
+}
+
 /* 胶囊小标签：单行、不参与挤压 */
 .ot-chip {
   flex: 0 0 auto; font-size: 10.5px; line-height: 1.6;
@@ -366,6 +381,49 @@ window.__ModuleLoader__.load({
       const cfg = data?.config;
       const models = cfg?.models ?? [];
       const efforts = cfg?.options?.reasoningEffort ?? ['low', 'medium', 'high'];
+
+      /** 已停用的模型 id 集合（来自运行时配置）。 */
+      const disabledSet = new Set(cfg?.disabledModels ?? []);
+
+      /**
+       * 判断模型是否启用。
+       *
+       * @param {object} m 模型条目。
+       * @returns {boolean}
+       */
+      const isModelEnabled = (m) => !disabledSet.has(m?.id);
+
+      /**
+       * 启用 / 停用某个模型。
+       *
+       * 停用后该模型会从 DSH 的模型选择器里消失；若它正是默认模型，
+       * Host 侧会自动切到第一个可用模型并回传。
+       *
+       * @param {string} id 模型 id。
+       * @param {boolean} enabled 目标状态。
+       */
+      const toggleModel = (id, enabled) =>
+        run('toggleModel', async () => {
+          const r = await api('models/toggle', {
+            method: 'POST',
+            body: JSON.stringify({ id, enabled }),
+            timeout: 30000,
+          });
+          await load();
+          const name = models.find((m) => m.id === id)?.name ?? id;
+          if (enabled) {
+            flash({ title: `已启用 ${name}`, detail: '它现在会出现在 DSH 的模型选择器里。' });
+          } else {
+            // 若默认模型被停用，Host 会顺带换默认 —— 这点要明确告诉用户
+            const switched = r?.model && r.model !== cfg?.model;
+            flash({
+              title: `已停用 ${name}`,
+              detail: switched
+                ? `它不再出现在模型选择器里。由于它原本是默认模型，已自动切换为 ${r.model}。`
+                : '它不再出现在 DSH 的模型选择器里。',
+            });
+          }
+        });
 
       const saveConfig = (patch) =>
         run('config', async () => {
@@ -887,7 +945,7 @@ window.__ModuleLoader__.load({
           { title: '生成参数', sub: '改动会立即生效，并对后续所有会话起作用' },
           h(
             Row,
-            { label: '默认模型', hint: '新会话未显式选择时使用' },
+            { label: '默认模型', hint: '新会话未显式选择时使用；只列出已启用的模型' },
             h(
               'select',
               {
@@ -896,7 +954,11 @@ window.__ModuleLoader__.load({
                 disabled: Boolean(busy),
                 onChange: (e) => saveConfig({ model: e.target.value }),
               },
-              models.map((m) => h('option', { key: m.id, value: m.id }, m.name)),
+              // 只列启用的；若当前值已停用，补一个占位避免下拉显示错乱
+              models.filter(isModelEnabled).map((m) => h('option', { key: m.id, value: m.id }, m.name)),
+              cfg.model && disabledSet.has(cfg.model)
+                ? h('option', { value: cfg.model }, `${cfg.model}（已停用）`)
+                : null,
             ),
           ),
           h(
@@ -998,9 +1060,12 @@ window.__ModuleLoader__.load({
                 onChange: (e) => saveConfig({ fallbackModel: e.target.value }),
               },
               h('option', { value: '' }, '不降级'),
-              models.map((m) =>
+              models.filter(isModelEnabled).map((m) =>
                 h('option', { key: m.id, value: m.id }, m.name),
               ),
+              cfg.fallbackModel && disabledSet.has(cfg.fallbackModel)
+                ? h('option', { value: cfg.fallbackModel }, `${cfg.fallbackModel}（已停用）`)
+                : null,
             ),
           ),
           h(
@@ -1075,31 +1140,45 @@ window.__ModuleLoader__.load({
           Card,
           {
             title: '可用模型',
-            sub: '8 个模型共用同一额度池。可测试连通性，或点「设为默认」切换新会话使用的模型。',
+            sub: '所有模型共用同一额度池。可以测试连通性、切换默认模型，或停用不想看到的模型',
             actions: h(
-              'button',
-              {
-                className: 'ot-btn',
-                disabled: Boolean(busy) || Boolean(testing),
-                onClick: async () => {
-                  for (const m of models) {
-                    // 串行，避免并发打满额度
-                    await testOne(m.id);
-                  }
+              'div',
+              { className: 'ot-actions' },
+              h(
+                'button',
+                {
+                  className: 'ot-btn',
+                  disabled: Boolean(busy) || Boolean(testing),
+                  onClick: async () => {
+                    for (const m of models) {
+                      if (!isModelEnabled(m)) continue; // 停用的不测
+                      await testOne(m.id);
+                    }
+                  },
                 },
-              },
-              testing ? '测试中…' : '全部测试',
+                testing ? '测试中…' : '测试已启用',
+              ),
             ),
           },
+
+          // 启用计数提示
+          h(
+            'div',
+            { className: 'ot-hint', style: { marginBottom: 8 } },
+            `已启用 ${models.filter(isModelEnabled).length} / ${models.length} 个模型。停用的模型不会出现在 DSH 的模型选择器里。`,
+          ),
+
           h(
             'div',
             { className: 'ot-models' },
             models.map((m) => {
               const r = tests[m.id];
               const isDefault = cfg.model === m.id;
+              const enabled = isModelEnabled(m);
+              const enabledCount = models.filter(isModelEnabled).length;
               return h(
                 'div',
-                { key: m.id, className: 'ot-model' },
+                { key: m.id, className: `ot-model${enabled ? '' : ' ot-model-off'}` },
                 // 主信息：模型名 + 标识，占据剩余宽度
                 h(
                   'div',
@@ -1110,6 +1189,7 @@ window.__ModuleLoader__.load({
                     h('span', { className: 'ot-model-title-text' }, m.name),
                     isDefault ? h('span', { className: 'ot-chip ot-chip-default' }, '默认') : null,
                     m.free ? h('span', { className: 'ot-chip ot-chip-free' }, '限时免费') : null,
+                    enabled ? null : h('span', { className: 'ot-chip ot-chip-off' }, '已停用'),
                   ),
                   h(
                     'div',
@@ -1134,12 +1214,12 @@ window.__ModuleLoader__.load({
                     'button',
                     {
                       className: 'ot-btn ot-btn-sm',
-                      disabled: Boolean(testing) || Boolean(busy),
+                      disabled: Boolean(testing) || Boolean(busy) || !enabled,
                       onClick: () => testOne(m.id),
                     },
                     testing === m.id ? h('span', { className: 'ot-spin' }) : '测试',
                   ),
-                  isDefault
+                  isDefault || !enabled
                     ? null
                     : h(
                         'button',
@@ -1150,6 +1230,17 @@ window.__ModuleLoader__.load({
                         },
                         '设为默认',
                       ),
+                  // 启用 / 停用开关
+                  h(
+                    'button',
+                    {
+                      className: `ot-btn ot-btn-sm${enabled ? '' : ' ot-btn-off'}`,
+                      disabled: Boolean(busy) || (enabled && enabledCount <= 1),
+                      title: enabled && enabledCount <= 1 ? '至少要保留一个启用的模型' : undefined,
+                      onClick: () => toggleModel(m.id, !enabled),
+                    },
+                    enabled ? '停用' : '启用',
+                  ),
                 ),
               );
             }),

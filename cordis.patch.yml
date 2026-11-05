@@ -54,3 +54,12 @@
         #   （lost in the middle，是大模型的通病，与 OrcaTerm 无关）
         # 因此默认 200,000，用满可靠区间。设为 0 关闭裁剪（始终全量发送）。
         contextTrimChars: 200000
+
+        # 已停用的模型 id 列表。停用后该模型不会出现在 DSH 的模型选择器里，
+        # 也无法被设为默认模型或备用模型。
+        # 一般不用在这里手写 —— 在设置面板的「可用模型」里点「停用」即可，
+        # 插件会把结果写回配置文件。
+        # disabledModels:
+        #   - "TokenHub/glm-5.3"
+        #   - "Hunyuan3/hy3"
+        disabledModels: []
